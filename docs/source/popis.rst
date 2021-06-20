@@ -3,7 +3,7 @@ Návod k použití
 
 Vybereme obec či obce, které chceme stáhnout:
 
-.. image:: 
+.. image:: images/select.png
    :width: 600
            
 .. important:: Je vhodné zvolit menší objem dat maximálně ve velikosti
