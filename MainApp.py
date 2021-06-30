@@ -28,7 +28,7 @@ from collections import OrderedDict
 
 from qgis.PyQt.QtCore import QSortFilterProxyModel, QThread, pyqtSignal, qDebug, QObject, QSettings, Qt, QRegExp
 from qgis.PyQt.QtGui import QStandardItem, QColor, QStandardItemModel
-from qgis.PyQt.QtWidgets import QDialog, QAbstractItemView, QFileDialog, QProgressDialog, QMessageBox
+from qgis.PyQt.QtWidgets import QDialog, QAbstractItemView, QFileDialog, QProgressDialog, QMessageBox, QLineEdit
 
 from qgis.core import QgsProject, QgsVectorLayer, Qgis
 
@@ -106,9 +106,12 @@ class MainApp(QDialog):
 
         # set up widgets
         self.ui.driverBox.setToolTip(u'Zvolte typ výstupního souboru/databáze')
-        self.ui.driverBox.addItem('--Vybrat--')
+        self.ui.filenameSet.setToolTip(u'Vyberte cestu/nazev pro SQLite DB / OGC GeoPackage')
+        self.ui.browseButton.setToolTip(u'Vyberte uložiště')
+        # self.ui.driverBox.addItem('--Vybrat--')
         self.set_comboDrivers()
-        self.ui.driverBox.insertSeparator(4)  
+        # self.set_comboDrivers('GPKG')
+        # self.ui.driverBox.insertSeparator(4)
         self.ui.searchComboBox.addItems(['Obec', 'ORP', 'Okres', 'Kraj'])
         self.ui.searchComboBox.setEditable(True)
         self.ui.searchComboBox.clearEditText()
@@ -131,8 +134,8 @@ class MainApp(QDialog):
         self.ui.dataView.verticalHeader().hide()
 
         # signal/slots connections
-        self.ui.driverBox.activated['QString'].connect(self.set_datasource)              
-        self.ui.driverBox.currentIndexChanged['QString'].connect(self.enable_import)     
+        self.ui.driverBox.activated['QString'].connect(self.set_datasource)
+        self.ui.browseButton.clicked.connect(self.set_storagelocation)
         self.ui.searchComboBox.activated.connect(self.set_searching)
         self.ui.searchComboBox.editTextChanged.connect(self.start_searching)
         self.ui.checkButton.clicked.connect(lambda: self.set_checkstate(0))
@@ -161,6 +164,8 @@ class MainApp(QDialog):
             else:
                 model.appendRow(item)
 
+        # set default format
+        self.ui.driverBox.setCurrentIndex(1) # replace magic number with GPKG
 
     def create_model(self, file_path):
         """Create model-view from file.
@@ -205,6 +210,9 @@ class MainApp(QDialog):
 
         :param driverName: GDAL driver
         """
+
+        self.ui.filenameSet.clear()
+
         if self.ui.driverBox.currentIndex() == 0:
             return
 
@@ -214,8 +222,6 @@ class MainApp(QDialog):
         for driver, metadata in list(self.driverTypes.items()):
             if metadata['alias'] == driverName:
                 driverName = driver
-                driverAlias = metadata['alias']
-                driverExtension = metadata['ext']
 
         if driverName in self.missDrivers:
             # selected driver is not supported by installed GDAL
@@ -224,26 +230,55 @@ class MainApp(QDialog):
                                                 level=Qgis.Critical, duration=5)
             return
 
-        outputName = None
-        if driverName in ['SQLite', 'GPKG', 'ESRI Shapefile']:
-            sender = '{}-lastUserFilePath'.format(self.sender().objectName())
-            lastUsedFilePath = self.settings.value(sender, os.path.expanduser("~"))
 
-            if driverName == 'ESRI Shapefile':
+    def data_select(self, data_box):
+        """Enable/disable data selection widgets.
+
+        :param data_box: group box
+        """
+        if currentIndex() == 1:
+            self.ui.selectionComboBox.setEnabled(False)
+        else:
+            self.ui.selectionComboBox.setEnabled(True)
+
+
+    def set_storagelocation(self,sdriver):
+        """Set selected GDAL driver and datasource from combobox.
+
+        :param sdriver: GDAL driver
+        """
+        outputName = None
+        fileName = self.ui.filenameSet.text()
+        sdriver = self.ui.driverBox.currentText()
+
+        for driver, metadata in list(self.driverTypes.items()):
+            if metadata['alias'] == sdriver:
+                sdriver = driver
+                driverAlias = metadata['alias']
+                driverExtension = metadata['ext']
+
+        #if driverName in ['SQLite', 'GPKG', 'ESRI Shapefile']:
+        if sdriver in ['SQLite', 'GPKG', 'ESRI Shapefile']:
+            sender = '{}-lastUserFilePath'.format(self.sender().objectName())
+            #lastUsedFilePath = self.settings.value(sender, os.path.expanduser("~"))
+
+            #if driverName == 'ESRI Shapefile':
+            if sdriver == 'ESRI Shapefile':
                 outputName = QFileDialog.getExistingDirectory(
                     self,
                     u'Vybrat/vytvořit výstupní adresář',
-                    lastUsedFilePath)
+                    fileName)
             else:
                 outputName, filter = QFileDialog.getSaveFileName(
                     self,
                     u'Vybrat/vytvořit výstupní soubor',
-                    '{}{}ruian.{}'.format(lastUsedFilePath, os.path.sep, driverExtension),
+                    #'{}{}{}.{}'.format(lastUsedFilePath, os.path.sep, fileName, driverExtension),
+                    '{}.{}'.format(fileName, driverExtension),
                     '{} (*.{})'.format(driverAlias, driverExtension),
                     options=QFileDialog.DontConfirmOverwrite)
-            print (outputName)
+
             if not outputName:
-                self.ui.driverBox.setCurrentIndex(0)
+                self.ui.driverBox.setCurrentIndex(1)
                 return
 
             try:
@@ -255,25 +290,25 @@ class MainApp(QDialog):
 
                 self.settings.setValue(sender, os.path.dirname(outputName))
 
-                driver = ogr.GetDriverByName(driverName)
+                driver = ogr.GetDriverByName(sdriver)
                 capability = driver.TestCapability(ogr._ogr.ODrCCreateDataSource)
-                
+
                 if capability:
                     self.ui.driverBox.setToolTip(outputName)
-                    self.option['driver'] = str(driverName)
+                    self.option['driver'] = str(sdriver)
                     self.option['datasource'] = outputName
                     if not self.ui.importButton.isEnabled():
                         self.ui.importButton.setEnabled(True)
                 else:
                     raise RuianError(u"Nelze vytvořit {}".format(outputName))
 
-                self.ui.outputPath.setText(outputName)
+                self.ui.filenameSet.setText(outputName)
             except RuianError as e:
                 self.iface.messageBar().pushMessage(u'{}'.format(e),
                                                     level=Qgis.Critical, duration=5)
-                self.ui.driverBox.setCurrentIndex(0)
+                self.ui.driverBox.setCurrentIndex(1)
         else:
-            self.iface.messageBar().pushMessage(u"Ovladač {} není podporován".format(driverName),
+            self.iface.messageBar().pushMessage(u"Ovladač {} není podporován".format(sdriver),
                                                 level=Qgis.Critical, duration=5)
 
         # elif driverName in ['PostgreSQL','MSSQLSpatial']:
@@ -282,26 +317,6 @@ class MainApp(QDialog):
         #     self.connection.show()
         #     self.connection.setWindowTitle(u'Připojení k databázi {}'.format(driverName))
 
-    def enable_import(self, driverName):
-        """Enable/disable import widgets.
-
-        :param driverName: selected GDAL driver
-        """
-        if driverName == '--Vybrat--':
-            self.ui.driverBox.setToolTip(u'Zvolte typ výstupního souboru/databáze')
-            self.ui.importButton.setEnabled(False)
-        else:
-            self.ui.importButton.setEnabled(True)
-
-    def data_select(self, data_box):
-        """Enable/disable data selection widgets.
-
-        :param data_box: group box
-        """
-        if self.ui.datasetComboBox.currentIndex() == 1:
-            self.ui.selectionComboBox.setEnabled(False)
-        else:
-            self.ui.selectionComboBox.setEnabled(True)
 
     def set_searching(self, column):
         """Set filtering.
